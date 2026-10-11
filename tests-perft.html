@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>perft</title></head>
+<body><pre id="out">запуск…</pre>
+<script src="engine.js"></script>
+<script>
+const lines = [];
+function log(s){ lines.push(s); document.getElementById('out').textContent = lines.join('\n'); }
+let allOk = true;
+for (const suite of Chess.PERFT_SUITES) {
+  const state = Chess.newState(suite.fen);
+  for (let d = 1; d <= suite.expect.length; d++) {
+    const t0 = performance.now();
+    const got = Chess.perft(state, d);
+    const ms = Math.round(performance.now() - t0);
+    const want = suite.expect[d-1];
+    const ok = got === want;
+    if (!ok) allOk = false;
+    log(`${ok ? 'OK  ' : 'FAIL'} ${suite.name} d${d}: ${got} (ожидалось ${want}) ${ms}ms`);
+  }
+}
+// Бонус: ловушка на взятие на проходе и превращение + телекинез
+const epState = Chess.newState('rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3');
+log('ep-ходов (ожидается 1): ' + Chess.legalMoves(epState).filter(m=>m.flags==='e').length);
+const promoState = Chess.newState('8/P6k/8/8/8/8/8/K7 w - - 0 1');
+log('превращений (ожидается 4): ' + Chess.legalMoves(promoState).filter(m=>m.promo).length);
+const castState = Chess.newState('r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1');
+log('рокировок (ожидается 2): ' + Chess.legalMoves(castState).filter(m=>m.flags==='k'||m.flags==='q').length);
+const castBlocked = Chess.newState('r3k2r/8/8/8/8/8/8/R3K1NR w KQkq - 0 1');
+log('рокировок при коне на f1 (короткая запрещена, ожидается 1): ' + Chess.legalMoves(castBlocked).filter(m=>m.flags==='k'||m.flags==='q').length);
+
+// Телекинез: обмены не должны ломать генератор ходов
+const sw = Chess.newState('r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1');
+sw.charges.w = 2;
+log('обменов при 11 фигурах (5 пешек не встают на 1-ю линию): ' + Chess.legalMoves(sw).filter(m=>m.swap).length);
+const sw2 = Chess.newState('r3k2r/pPpppppp/8/8/8/8/PpPPPPPP/R3K2R w KQkq - 0 1');
+sw2.charges.w = 1;
+const sw2n = Chess.legalMoves(sw2).filter(m=>m.swap).length;
+log('обменов при 14 фигурах, пешки у края (ожидается 91): ' + sw2n);
+log(allOk ? 'perft: ВСЕ ЗНАЧЕНИЯ СОВПАЛИ' : 'perft: ЕСТЬ ОШИБКИ');
+window.__perftResult = { allOk: allOk, log: lines.join('\n') };
+</script></body></html>

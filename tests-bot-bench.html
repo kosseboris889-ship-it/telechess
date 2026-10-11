@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>скорость и качество поиска</title>
+<style>
+  body { background:#0b0e14; color:#e8eefc; font:14px/1.55 "Segoe UI",system-ui,sans-serif; padding:18px; }
+  h1 { font-size:18px; color:#6ea8ff; margin:0 0 4px; }
+  .hint { color:#7b86a5; font-size:13px; margin-bottom:12px; }
+  .ok { color:#37d39b; } .bad { color:#ff5f7a; } .sum { color:#ffd27a; font-weight:600; margin-top:10px; }
+  table { border-collapse:collapse; margin-top:8px; font-size:13px; }
+  td, th { border:1px solid #232a3c; padding:3px 8px; text-align:right; }
+  th { color:#7b86a5; font-weight:600; }
+  td:first-child, th:first-child { text-align:left; }
+</style></head>
+<body>
+<h1>Скорость и качество поиска</h1>
+<div class="hint">Каждая позиция ищется одинаковое время. Смотрим, сколько узлов и какой глубины
+удаётся reached за отведённые миллисекунды — это главный рычаг силы бота.</div>
+<div id="out"></div>
+<script src="engine.js"></script>
+<script src="bot.js"></script>
+<script src="bot-legacy.js"></script>
+<script>
+/* Одинаковый бюджет времени на позицию для нового и эталонного бота. */
+const TIME_MS = 700;
+
+const POSITIONS = [
+  { name: 'начало',            fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' },
+  { name: 'испанский, 5 ходов', fen: 'r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3' },
+  { name: 'сицилианская',      fen: 'rnbqkb1r/pp2pppp/2p2n2/3p4/3P4/2N2N2/PP2PPPP/R1BQKB1R w KQkq - 4 5' },
+  { name: 'защита Каро-Канн',  fen: 'rn1qkb1r/pp2pppp/2p2n2/3p2b1/3P4/2N1PN2/PP2BPPP/R1BQK2R w KQkq - 2 6' },
+  { name: 'нимцо-индийский',   fen: 'r1bq1rk1/pp2ppbp/2np1np1/8/2BNP3/2N1B3/PPP2PPP/R2Q1RK1 w - - 6 9' },
+  { name: 'миттельшпиль',      fen: 'r2q1rk1/pp2bppp/2n1pn2/3p4/3P4/2NBPN2/PP3PPP/R1BQ1RK1 w - - 2 9' },
+  { name: 'эндшпиль: ладьи',   fen: '8/8/4k3/8/4P3/4K3/8/6R1 w - - 0 40' },
+  { name: 'эндшпиль: кони',    fen: '8/8/4k3/8/8/2N1K3/8/6N1 w - - 0 40' },
+  { name: 'заряды телекинеза', fen: 'r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 1', charges: [2, 1] },
+];
+
+const out = document.getElementById('out');
+const lines = [];
+function log(s, cls) {
+  const div = document.createElement('div');
+  if (cls) div.className = cls;
+  div.textContent = s;
+  out.appendChild(div);
+  lines.push(s);
+}
+
+function stateFor(p) {
+  const st = Chess.newState(p.fen);
+  if (p.charges) { st.charges.w = p.charges[0]; st.charges.b = p.charges[1]; }
+  return st;
+}
+
+function snap(engine, state) {
+  const legal = Chess.legalMoves(state);
+  const move = state.pos.board.some(p => p) ? legal : [];
+  return { legalCount: move.length };
+}
+
+async function run() {
+  const table = document.createElement('table');
+  table.innerHTML = '<tr><th>позиция</th><th>бот</th><th>глубина</th><th>узлы</th>' +
+    '<th>узлов/с</th><th>счёт</th><th>ход</th></tr>';
+  out.appendChild(table);
+
+  let newNodes = 0, oldNodes = 0, newDepth = 0, oldDepth = 0, illegal = 0;
+  const rows = [];
+
+  for (const p of POSITIONS) {
+    for (const [label, engine] of [['новый', Bot], ['эталон', window.BotLegacy]]) {
+      const st = stateFor(p);
+      const legal = Chess.legalMoves(st);
+      const started = performance.now();
+      const res = await engine.findBestMove(st, {
+        level: 'hard', useBook: false, timeMs: TIME_MS, tolerance: 0,
+      });
+      const ms = Math.round(performance.now() - started);
+      const ok = legal.some(m => m.from === res.move.from && m.to === res.move.to &&
+        (m.promo || null) === (res.move.promo || null) && !!m.swap === !!res.move.swap);
+      if (!ok) illegal++;
+
+      rows.push({
+        имя: p.name, бот: label, глубина: res.depth, узлы: res.nodes,
+        нвс: Math.round(res.nodes / Math.max(1, ms) * 1000),
+        счёт: Math.round(res.score), ход: Chess.sqName(res.move.from) + '-' + Chess.sqName(res.move.to) +
+          (res.move.promo || '') + (res.move.swap ? ' (обмен)' : ''),
+        ок: ok, мс: ms,
+      });
+
+      if (label === 'новый') { newNodes += res.nodes; newDepth += res.depth; }
+      else { oldNodes += res.nodes; oldDepth += res.depth; }
+    }
+  }
+
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td>' + r.имя + '</td><td>' + r.бот + '</td><td>' + r.глубина + '</td><td>' +
+      r.узлы.toLocaleString('ru') + '</td><td>' + r.нвс.toLocaleString('ru') + '</td><td>' +
+      r.счёт + '</td><td>' + r.ход + (r.ок ? '' : ' ⚠') + '</td>';
+    if (!r.ок) tr.className = 'bad';
+    table.appendChild(tr);
+  }
+
+  const ratio = oldNodes ? (newNodes / oldNodes) : 1;
+  log('');
+  log('Всего узлов: новый ' + newNodes.toLocaleString('ru') + ', эталон ' + oldNodes.toLocaleString('ru'),
+      'sum');
+  log('Прирост узлов за то же время: ' + (ratio >= 1 ? '+' : '') + Math.round((ratio - 1) * 100) + '%',
+      ratio >= 1 ? 'ok' : 'bad');
+  log('Средняя глубина: новая ' + (newDepth / POSITIONS.length).toFixed(1) +
+      ', эталон ' + (oldDepth / POSITIONS.length).toFixed(1));
+
+  /* скорость самой оценки: если она просела, узлы падают в первую очередь */
+  const evalPositions = POSITIONS.map(stateFor);
+  const timeEval = engine => {
+    const t = performance.now();
+    for (let pass = 0; pass < 60; pass++) {
+      for (const st of evalPositions) engine.evaluate(st);
+    }
+    return (performance.now() - t) / (60 * evalPositions.length);
+  };
+  timeEval(Bot);                                  /* прогрев */
+  const evalNew = timeEval(Bot);
+  const evalOld = timeEval(window.BotLegacy);
+  log('Оценка: новая ' + evalNew.toFixed(1) + ' мкс, эталон ' + evalOld.toFixed(1) +
+      ' мкс (' + (evalNew <= evalOld * 1.15 ? 'нормально' : 'замедлилась') + ')',
+      evalNew <= evalOld * 1.15 ? 'ok' : 'bad');
+
+  log('Недопустимых ходов: ' + illegal, illegal ? 'bad' : 'ok');
+  window.__bench = { ratio, illegal, newNodes, oldNodes, evalNew, evalOld };
+}
+
+/* Прогон по кадру, чтобы страница не «зависала» белым экраном. */
+(async () => {
+  for (let i = 0; i < POSITIONS.length * 2; i++) {
+    await new Promise(r => requestAnimationFrame(r));
+  }
+  await run();
+})();
+</script></body></html>

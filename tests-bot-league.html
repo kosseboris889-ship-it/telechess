@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>лига: новый бот против эталона</title>
+<style>
+  body { background:#0b0e14; color:#e8eefc; font:14px/1.55 "Segoe UI",system-ui,sans-serif; padding:18px; }
+  h1 { font-size:18px; color:#6ea8ff; margin:0 0 4px; }
+  .hint { color:#7b86a5; font-size:13px; margin-bottom:12px; max-width: 780px; }
+  .ok { color:#37d39b; } .bad { color:#ff5f7a; } .sum { color:#ffd27a; font-weight:600; margin-top:10px; }
+  .progress { color:#6ea8ff; margin-bottom:8px; }
+</style></head>
+<body>
+<h1>Лига: новый бот против эталона</h1>
+<div class="hint" id="cfg"></div>
+<div class="progress" id="progress">идёт…</div>
+<div id="out"></div>
+<script src="engine.js"></script>
+<script src="bot.js"></script>
+<script src="bot-legacy.js"></script>
+<script>
+/* Одинаковая глубина поиска у обоих, меняются только цвета и право первого
+   хода. Процент очков нового бота и есть мера усиления.
+   Используем quick (фиксированная глубина, без часов): он быстрый, и результат
+   не зависит от загрузки машины — иначе замеры нельзя сравнивать между
+   запусками и правками движка. */
+const PARAMS = {
+  /* Глубина 3 — компромисс: на глубине 2 эталон за счёт перебора обменов
+     «везде» получает больше узлов, и сравнение нечестно; на 4+ минуты. */
+  depth: 3,
+  moveMs: 800,
+  maxPlies: 90,
+};
+
+/* Разные стартовые позиции — иначе детерминированный движок сыграет одну и
+   ту же партию много раз и замер ничего не скажет. По каждой позиции новый бот
+   играет и белыми, и чёрными, так что перевес не может быть систематическим. */
+const STARTS = [
+  'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+  'r2q1rk1/pp2bppp/2n1pn2/3p4/3P4/2NBPN2/PP3PPP/R1BQ1RK1 w - - 2 9',
+  '8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1',
+];
+
+const lines = [];
+const out = document.getElementById('out');
+function log(s, cls) {
+  const div = document.createElement('div');
+  if (cls) div.className = cls;
+  div.textContent = s;
+  out.appendChild(div);
+  lines.push((cls ? '[' + cls + '] ' : '') + s);
+}
+document.getElementById('cfg').textContent =
+  'Глубина ' + PARAMS.depth + ' полухода у обоих, ' + STARTS.length * 2 +
+  ' партий из ' + STARTS.length + ' разных позиций. В каждой новый бот играет и белыми, и чёрными, ' +
+  'заряды у обоих одинаковые — так перевес не может быть систематическим.';
+
+function scoreOf(result, myColor) {
+  if (!result) return 0.5;
+  if (result.result === '1/2-1/2') return 0.5;
+  const winner = result.result === '1-0' ? 'w' : 'b';
+  return winner === myColor ? 1 : 0;
+}
+
+async function playGame(engineA, engineB, fen, charges) {
+  /* reset(fen), а не присваивание game.state: state — это геттер,
+     и молчаливое присваивание оставляло партию в стартовой позиции */
+  const game = new Chess.Game().reset(fen);
+  game.state.charges.w = charges[0];
+  game.state.charges.b = charges[1];
+  let plies = 0;
+  while (!game.result && game.ply < PARAMS.maxPlies) {
+    const engine = game.state.pos.turn === 'w' ? engineA : engineB;
+    const legal = Chess.legalMoves(game.state);
+    if (!legal.length) break;
+    const res = engine.quick(game.state, 'easy', { depth: PARAMS.depth, timeMs: PARAMS.moveMs });
+    if (!res.move) break;
+    const okMove = legal.some(m => m.from === res.move.from && m.to === res.move.to &&
+      (m.promo || null) === (res.move.promo || null) && !!m.swap === !!res.move.swap);
+    if (!okMove) return { result: { result: '0-1', reason: 'нелегальный ход' }, illegal: true, plies };
+    const applied = game.play(res.move);
+    if (!applied.ok) return { result: { result: '0-1', reason: 'ход не применился' }, illegal: true, plies };
+    plies++;
+  }
+  if (!game.result && game.ply >= PARAMS.maxPlies) {
+    return { result: { result: '1/2-1/2', reason: 'предел ходов' }, illegal: false, plies };
+  }
+  return { result: game.result, illegal: false, plies };
+}
+
+async function run() {
+  let score = 0;
+  let illegal = 0;
+  let totalPlies = 0;
+  let games = 0;
+  const progress = document.getElementById('progress');
+  const detail = [];
+
+  for (const fen of STARTS) {
+    for (const newIsWhite of [true, false]) {
+      /* одинаковые заряды у обоих, чтобы никто не получал форы */
+      const engineA = newIsWhite ? Bot : window.BotLegacy;
+      const engineB = newIsWhite ? window.BotLegacy : Bot;
+      const g = await playGame(engineA, engineB, fen, [1, 1]);
+      const points = scoreOf(g.result, newIsWhite ? 'w' : 'b');
+      score += points;
+      games++;
+      if (g.illegal) illegal++;
+      totalPlies += g.plies;
+      detail.push(fen.split('/')[0].padEnd(10) + ' ' + (newIsWhite ? 'белые' : 'чёрные') + ': ' +
+        (g.result ? g.result.result + ' (' + g.result.reason + ')' : 'нет результата') +
+        ' · ' + g.plies + ' полуходов · ' + points);
+      progress.textContent = 'партия ' + games + ' из ' + (STARTS.length * 2) +
+        ' · очки ' + score.toFixed(1) + ' · ходов ' + totalPlies;
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+
+  for (const line of detail) log(line);
+  const pct = score / games;
+  log('');
+  log('Очков нового бота: ' + score.toFixed(1) + ' из ' + games +
+      ' (' + Math.round(pct * 100) + '%)', 'sum');
+  log('Средняя длина партии: ' + Math.round(totalPlies / games) + ' полуходов');
+  log('Партий с нелегальным ходом: ' + illegal, illegal ? 'bad' : 'ok');
+  const verdict = pct >= 0.6 ? 'ok' : pct >= 0.45 ? '' : 'bad';
+  log(pct >= 0.6 ? '=== БОТ ЗАМЕТНО СИЛЬНЕЕ ЭТАЛОНА ===' :
+      pct >= 0.45 ? '=== СИЛЫ СРАВНИМЫ (нужно ≥ 60%) ===' :
+      '=== БОТ СТАЛ СЛАБЕЕ ЭТАЛОНА ===', verdict);
+  window.__league = { pct, score, games, illegal };
+}
+
+(async () => {
+  try { await run(); }
+  catch (error) {
+    log('ИСКЛЮЧЕНИЕ: ' + error.message + '\n' + error.stack, 'bad');
+    window.__league = { error: String(error && error.message) };
+  }
+})();
+</script></body></html>

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>фигуры</title>
+<style>
+ body { background:#0b0e14; color:#dfe6f7; font:14px "Segoe UI",system-ui,sans-serif; margin:0; padding:16px; }
+ h2 { font-size:15px; color:#6ea8ff; margin:18px 0 8px; }
+ .row { display:flex; gap:10px; flex-wrap:wrap; }
+ .cell {
+   width:110px; height:110px; display:grid; place-items:center;
+   border-radius:10px; border:1px solid #2a3245; background:#161b28;
+ }
+ .cell.small { width:41px; height:41px; }
+ .cell.med { width:64px; height:64px; }
+ .piece-svg { width:88%; height:88%; display:block; }
+ .cell.small .piece-svg { width:96%; height:96%; }
+ .board-mini { display:grid; grid-template-columns:repeat(8,1fr); width:328px; border-radius:8px; overflow:hidden; }
+ .board-mini div { aspect-ratio:1; display:grid; place-items:center; }
+ .board-mini .l { background:#e9e2cf; } .board-mini .d { background:#7c9a63; }
+ .piece { display:grid; place-items:center; width:100%; height:100%; }
+ .piece-svg { width:86%; height:86%; }
+</style></head>
+<body>
+<h2>Белые</h2>
+<div class="row" id="w"></div>
+<h2>Чёрные</h2>
+<div class="row" id="b"></div>
+<h2>Мелкий размер (клетка 41px — телефон)</h2>
+<div class="row" id="small"></div>
+<h2>На доске</h2>
+<div class="board-mini" id="board"></div>
+<script src="pieces.js"></script>
+<script>
+const white = ['K','Q','R','B','N','P'];
+const black = ['k','q','r','b','n','p'];
+document.getElementById('w').innerHTML = white.map(p => '<div class="cell">' + Pieces.html(p) + '</div>').join('');
+document.getElementById('b').innerHTML = black.map(p => '<div class="cell">' + Pieces.html(p) + '</div>').join('');
+document.getElementById('small').innerHTML = white.concat(black).map(p => '<div class="cell small">' + Pieces.html(p) + '</div>').join('');
+/* мини-доска с настоящей стартовой расстановкой */
+const FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
+const cells = [];
+for (let r = 7; r >= 0; r--) {
+  let f = 0;
+  for (const ch of FEN.split('/')[7 - r]) {
+    if (ch >= '1' && ch <= '8') { for (let i = 0; i < +ch; i++) cells.push(null); f += +ch; }
+    else { cells.push(ch); f++; }
+  }
+}
+document.getElementById('board').innerHTML = cells.map(p =>
+  '<div class="' + ((cells.indexOf(p) % 2) ? 'd' : 'l') + '">' + (p ? Pieces.html(p) : '') + '</div>'
+).join('').replace(/undefined/g, '');
+</script>
+</body></html>

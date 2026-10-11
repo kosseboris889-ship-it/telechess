@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>bot tests</title></head>
+<body><pre id="out">run…</pre>
+<script src="engine.js"></script>
+<script src="bot.js"></script>
+<script>
+const lines = [];
+let fails = 0;
+function log(s){ lines.push(s); document.getElementById('out').textContent = lines.join('\n'); }
+function chk(label, got, want){
+  const ok = JSON.stringify(got) === JSON.stringify(want);
+  if (!ok) fails++;
+  log((ok?'OK   ':'FAIL ') + label + ': ' + JSON.stringify(got) + (ok?'':' (ожидалось '+JSON.stringify(want)+')'));
+}
+function stateFrom(fen){ return Chess.newState(fen); }
+function sameMove(a, b){ return a.from === b.from && a.to === b.to && (a.promo||null) === (b.promo||null) && !!a.swap === !!b.swap; }
+
+// 1) мат в один
+let st = stateFrom('6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1');
+let r = Bot.quick(st, 'medium');
+chk('находит мат в один', Chess.sqName(r.move.from) + Chess.sqName(r.move.to), 'a1a8');
+
+// 2) взятие на проходе: простой эндшпиль, где пешку не отыграть
+st = stateFrom('8/8/8/3pP3/8/8/8/4K1k1 w - d6 0 1');
+chk('взятие на проходе есть в списке ходов',
+    Chess.legalMoves(st).filter(m=>m.flags==='e').map(m=>Chess.sqName(m.to)), ['d6']);
+r = Bot.quick(st, 'medium');
+chk('берёт пешку на проходе', Chess.sqName(r.move.to), 'd6');
+
+// 3) висящий ферзь
+st = stateFrom('4k3/8/8/q7/8/8/8/R3K3 w Q - 0 1');
+r = Bot.quick(st, 'medium');
+chk('забирает висящую фигуру', Chess.typeOf(r.move.captured) === 'Q', true);
+
+// 4) не отдаёт ладью за ферзя
+st = stateFrom('4k3/8/8/8/8/8/4q3/4K2R w K - 0 1');
+r = Bot.quick(st, 'medium');
+chk('не ловит ферзя ладьёй', r.move.from !== Chess.nameToSq('h1'), true);
+
+// 5) самоигра: партии доходят до конца, все ходы бота легальны
+const results = {};
+let maxPlies = 0, illegal = 0, swapsPlayed = 0, gamesWithSwaps = 0;
+const t0 = performance.now();
+for (let game = 0; game < 10; game++) {
+  const g = new Chess.Game();
+  g.state.charges.w = game % 2 === 0 ? 2 : 0;
+  g.state.charges.b = game % 3 === 0 ? 2 : 0;
+  let swapsHere = 0;
+  while (!g.result && g.ply < 240) {
+    const legal = Chess.legalMoves(g.state);
+    const res = Bot.quick(g.state, 'easy');
+    if (!res.move) break;
+    if (!legal.some(m => sameMove(m, res.move))) { illegal++; break; }
+    if (res.move.swap) swapsHere++;
+    if (!g.play(res.move).ok) { log('FAIL ход не применился: ' + JSON.stringify(res.move)); fails++; break; }
+  }
+  swapsPlayed += swapsHere;
+  if (swapsHere) gamesWithSwaps++;
+  maxPlies = Math.max(maxPlies, g.ply);
+  const reason = g.result ? g.result.reason : 'нет результата';
+  results[reason] = (results[reason] || 0) + 1;
+  log('партия ' + (game+1) + ': ' + reason + ', полуходов ' + g.ply + ', обменов ' + swapsHere + (g.result ? ' (' + g.result.result + ')' : ''));
+}
+log('10 самоигр за ' + ((performance.now()-t0)/1000).toFixed(1) + 'с, макс. полуходов: ' + maxPlies + ', обменов всего: ' + swapsPlayed);
+log('Итоги: ' + JSON.stringify(results));
+chk('бот ни разу не выдал нелегальный ход', illegal, 0);
+chk('бот пользовался телекинезом', gamesWithSwaps > 0, true);
+chk('во всех партиях есть результат', results['нет результата'], undefined);
+
+// 6) скорость поиска на реальной позиции
+st = stateFrom('r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4');
+const t1 = performance.now();
+const rh = Bot.quick(st, 'hard');
+const hardMs = Math.round(performance.now() - t1);
+const t2 = performance.now();
+const rm = Bot.quick(st, 'medium');
+const medMs = Math.round(performance.now() - t2);
+log('время поиска: medium ' + medMs + 'мс (' + rm.nodes + ' узлов), hard ' + hardMs + 'мс (' + rh.nodes + ' узлов)');
+log('оценка после лучшего хода: medium ' + rm.score + ', hard ' + rh.score);
+chk('поиск medium укладывается в 3 секунды', medMs < 3000, true);
+chk('поиск hard укладывается в 8 секунд', hardMs < 8000, true);
+
+log(fails === 0 ? '=== ТЕСТЫ БОТА ПРОЙДЕНЫ ===' : ('=== ОШИБОК: ' + fails + ' ==='));
+window.__bot = { fails, log: lines.join('\n') };
+</script></body></html>

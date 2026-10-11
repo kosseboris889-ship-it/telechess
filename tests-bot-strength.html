@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>сила бота</title>
+<style>
+ body { background:#0b0e14; color:#e8eefc; font:14px/1.55 "Segoe UI",system-ui,sans-serif; padding:18px; }
+ h1 { font-size:18px; color:#6ea8ff; }
+ .ok { color:#37d39b; } .bad { color:#ff5f7a; } .sum { color:#ffd27a; font-weight:600; margin-top:8px; }
+</style></head>
+<body>
+<h1>Замер силы бота</h1>
+<div id="out"></div>
+<script src="engine.js"></script>
+<script src="bot.js"></script>
+<script src="bot-legacy.js"></script>
+<script>
+/* =====================================================================
+   Замер силы бота. Ответ проверяется объективно (по правилам шахмат),
+   а не сравнением со «своим» ходом движка:
+     mate  — ход приводит к мату;
+     win   — после хода при ЛЮБОМ ответе соперника мы выигрываем
+             не меньше amount материала (считает и связки, и вилки);
+     fork  — ход даёт шах и после любого ответа соперника мы можем
+             взять фигуру стоимостью не меньше amount;
+     safe  — ход не приводит к потере материала.
+   ===================================================================== */
+const out = document.getElementById('out');
+const logLines = [];
+function log(s, cls) {
+  const div = document.createElement('div');
+  if (cls) div.className = cls;
+  div.textContent = s;
+  out.appendChild(div);
+  logLines.push((cls ? '[' + cls + '] ' : '') + s);
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const VALUE = { P: 100, N: 320, B: 330, R: 500, Q: 900, K: 0 };
+
+function material(state, color) {
+  let sum = 0;
+  for (const piece of state.pos.board) {
+    if (!piece) continue;
+    if (Chess.colorOf(piece) !== color) continue;
+    sum += VALUE[piece.toUpperCase()];
+  }
+  return sum;
+}
+/* Перевес: насколько мы лучше соперника по материалу */
+function advantage(state, color) {
+  return material(state, color) - material(state, Chess.other(color));
+}
+
+const PUZZLES = [
+  { name: 'мат на задней линии',        fen: '6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1', kind: 'mate' },
+  { name: 'мат ферзём',                fen: '6k1/5ppp/8/8/8/8/8/3Q2K1 w - - 0 1', kind: 'mate' },
+  { name: 'забрать висящего ферзя',    fen: '4k3/8/8/q7/8/8/8/R3K3 w Q - 0 1', kind: 'win', amount: 900 },
+  { name: 'забрать висящую ладью',     fen: '4k3/8/8/8/8/8/8/R3r1K1 w Q - 0 1', kind: 'win', amount: 500 },
+  { name: 'связка коня выигрывает ферзя', fen: 'k7/8/4N3/1q6/8/8/8/4K3 w - - 0 1', kind: 'fork', amount: 900 },
+  { name: 'забрать ферзя конём',       fen: '4k3/8/8/3q4/8/2N5/8/4K3 w - - 0 1', kind: 'win', amount: 900 },
+  { name: 'забрать ферзя слоном',      fen: '4k3/8/8/2q5/3B4/8/8/4K3 w - - 0 1', kind: 'win', amount: 900 },
+  { name: 'не отдавать ферзя слону',   fen: '4k3/8/8/8/2b5/8/4Q3/4K3 w - - 0 1', kind: 'safe' },
+  { name: 'не отдавать ладью',         fen: '3rk3/8/8/8/8/8/3R4/3K4 w - - 0 1', kind: 'safe' },
+  { name: 'взять ладью и выиграть тем', fen: '2k5/8/8/8/8/8/8/R3r1K1 w Q - 0 1', kind: 'win', amount: 500 },
+  { name: 'не отдавать коня за ладью', fen: '4k3/8/8/8/3n4/8/5N2/6K1 w - - 0 1', kind: 'safe' },
+  { name: 'взятие на проходе выигрывает', fen: '8/8/8/2k5/2pP4/8/B7/4K3 b - d3 0 1', kind: 'win', amount: 100 },
+  { name: 'не отдавать двух слонов',   fen: '4k3/8/8/8/8/2b5/8/2B1K3 w - - 0 1', kind: 'safe' },
+  { name: 'поймать ферзя вилкой',     fen: '4k3/8/5n2/8/8/5N2/8/4K3 w - - 0 1', kind: 'safe' },
+  { name: 'выиграть ферзя ладьёй',    fen: '4k3/8/8/8/8/8/8/q2R1K2 w Q - 0 1', kind: 'win', amount: 900 },
+  { name: 'не вставать под вилку',    fen: '4k3/8/5n2/8/8/8/5N2/4K3 w - - 0 1', kind: 'safe' },
+  { name: 'забрать висящего коня',     fen: '4k3/8/8/8/3nR3/8/8/4K3 w - - 0 1', kind: 'win', amount: 320 },
+  { name: 'выиграть пешку бесплатно', fen: '4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1', kind: 'safe' },
+  { name: 'мат конём в углу',          fen: '6k1/5ppp/8/8/8/8/8/5N1K w - - 0 1', kind: 'safe' },
+  { name: 'не отдавать ладью за слона', fen: '4k3/8/8/8/8/1b6/8/R3K3 w Q - 0 1', kind: 'safe' },
+];
+
+function gameFrom(fen) {
+  const g = new Chess.Game();
+  g.past = [Chess.newState(fen)];
+  g.keys = [Chess.posKey(g.state)];
+  return g;
+}
+
+function judge(puzzle, move, state) {
+  if (!move) return { ok: false, note: 'нет хода' };
+  const after = Chess.applyMove(state, move);
+  if (!after) return { ok: false, note: 'ход нелегален' };
+  const us = state.pos.turn;
+  const status = Chess.getStatus(after, [Chess.posKey(after)]);
+
+  if (puzzle.kind === 'mate') {
+    if (status.over && status.reason === 'checkmate') {
+      const winner = status.result === '1-0' ? 'w' : 'b';
+      return winner === us ? { ok: true, note: 'мат' } : { ok: false, note: 'мата нет' };
+    }
+    return { ok: false, note: 'мата нет' };
+  }
+
+  if (puzzle.kind === 'win') {
+    const before = advantage(state, us);
+    if (status.over && status.reason === 'checkmate' && status.result === (us === 'w' ? '1-0' : '0-1')) {
+      return { ok: true, note: 'мат вместо выигрыша' };
+    }
+    const replies = Chess.legalMoves(after);
+    if (replies.length === 0) return { ok: false, note: 'пат' };
+    let worst = Infinity;
+    for (const reply of replies) {
+      const next = Chess.applyMove(after, reply);
+      if (!next) continue;
+      worst = Math.min(worst, advantage(next, us) - before);
+    }
+    return worst >= puzzle.amount
+      ? { ok: true, note: 'выигрыш ≥' + worst }
+      : { ok: false, note: 'выигрыш лишь ' + worst };
+  }
+
+  if (puzzle.kind === 'fork') {
+    if (!Chess.isInCheck(after.pos, after.pos.turn)) return { ok: false, note: 'нет шаха' };
+    const replies = Chess.legalMoves(after);
+    if (replies.length === 0) return { ok: true, note: 'мат' };
+    for (const reply of replies) {
+      const next = Chess.applyMove(after, reply);
+      if (!next) continue;
+      let best = 0;
+      for (const m of Chess.legalMoves(next)) {
+        if (m.captured) best = Math.max(best, VALUE[Chess.typeOf(m.captured)]);
+      }
+      if (best < puzzle.amount) return { ok: false, note: 'соперник спасается' };
+    }
+    return { ok: true, note: 'вилка' };
+  }
+
+  if (puzzle.kind === 'safe') {
+    const replies = Chess.legalMoves(after);
+    const them = Chess.other(us);
+    const before = advantage(state, them);
+    for (const reply of replies) {
+      const next = Chess.applyMove(after, reply);
+      if (!next) continue;
+      const gain = advantage(next, them) - before;
+      if (gain <= 0) continue;
+      /* соперник взял — но можем ли мы сразу вернуть это взятием? */
+      let recapture = 0;
+      for (const m of Chess.legalMoves(next)) {
+        if (!m.captured) continue;
+        const net = VALUE[Chess.typeOf(m.captured)] - VALUE[Chess.typeOf(m.piece)];
+        if (net > recapture) recapture = net;
+      }
+      if (gain > recapture) return { ok: false, note: 'отдаём ' + gain };
+    }
+    return { ok: true, note: 'без потерь' };
+  }
+  return { ok: false, note: '?' };
+}
+
+/* проверим, что задачи вообще решаемы */
+function validate() {
+  const broken = [];
+  for (const puzzle of PUZZLES) {
+    const g = gameFrom(puzzle.fen);
+    let solutions = 0;
+    for (const m of Chess.legalMoves(g.state)) if (judge(puzzle, m, g.state).ok) solutions++;
+    if (!solutions) broken.push(puzzle.name + ' ' + puzzle.fen);
+  }
+  return broken;
+}
+
+async function run() {
+  const params = new URLSearchParams(location.search);
+  const level = params.get('level') || 'medium';
+  const withGames = params.get('games') !== '0';
+  /* ?engine=legacy — прогнать замороженный эталон по тем же задачам,
+     чтобы сравнение было честным (тот же набор, то же время) */
+  const engine = params.get('engine') === 'legacy' ? window.BotLegacy : Bot;
+
+  const broken = validate();
+  if (broken.length) {
+    log('НЕРАЗРЕШИМЫЕ ЗАДАЧИ: ' + broken.join(' | '), 'bad');
+  }
+
+  log('Уровень: ' + level + (engine === window.BotLegacy ? ' (эталон)' : ''));
+  let solved = 0;
+  const t0 = performance.now();
+  for (let i = 0; i < PUZZLES.length; i++) {
+    const puzzle = PUZZLES[i];
+    const g = gameFrom(puzzle.fen);
+    const start = performance.now();
+    const res = await engine.findBestMove(g.state, { level, useBook: false, timeMs: 1800 });
+    const ms = Math.round(performance.now() - start);
+    const verdict = judge(puzzle, res && res.move, g.state);
+    if (verdict.ok) solved++;
+    const name = res && res.move
+      ? Chess.sqName(res.move.from) + (res.move.swap ? '↔' : '') + Chess.sqName(res.move.to)
+      : '—';
+    log((verdict.ok ? 'РЕШЕНО  ' : 'ПРОМАХ  ') + puzzle.name + ' → ' + name +
+      ' [' + verdict.note + ', ' + ms + ' мс, ' + (res ? res.nodes : 0) + ' узлов]', verdict.ok ? 'ok' : 'bad');
+    await sleep(10);
+  }
+  const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+  log('');
+  log('ЗАДАЧИ: ' + solved + '/' + PUZZLES.length + ' (' + Math.round(solved / PUZZLES.length * 100) + '%) за ' + elapsed + ' с', 'sum');
+
+  let matchScore = '—';
+  if (withGames) {
+    const GAMES = 2;
+    let score = 0, nodes = 0;
+    for (let game = 0; game < GAMES; game++) {
+      const g = new Chess.Game();
+      g.state.charges.w = 2;
+      g.state.charges.b = 2;
+      while (!g.result && g.ply < 150) {
+        const res = await Bot.findBestMove(g.state, {
+          level: g.turn === 'w' ? 'hard' : 'easy',
+          useBook: false,
+          timeMs: 1800,
+        });
+        if (!res || !res.move) break;
+        nodes += res.nodes || 0;
+        if (!g.play(res.move).ok) break;
+      }
+      const whiteScore = !g.result ? 0.5
+        : g.result.result === '1-0' ? 1 : g.result.result === '0-1' ? 0 : 0.5;
+      const hardIsWhite = game % 2 === 0;
+      score += hardIsWhite ? whiteScore : 1 - whiteScore;
+      log('партия ' + (game + 1) + ' (сложно за ' + (hardIsWhite ? 'белых' : 'чёрных') + '): ' +
+        (g.result ? g.result.result + ' ' + g.result.reason : 'не окончена') + ', ' + g.ply + ' полуходов');
+      await sleep(10);
+    }
+    matchScore = (score / GAMES).toFixed(2);
+    log('МАТЧ «Сложно» против «Легко»: ' + matchScore + ' из ' + GAMES + ' (узлов ' + nodes + ')', 'sum');
+  }
+
+  window.__strength = {
+    level, solved, total: PUZZLES.length, matchScore, broken,
+    log: logLines.join('\n'),
+  };
+  log('ГОТОВО');
+}
+
+run().catch(error => {
+  log('ОШИБКА: ' + error.message, 'bad');
+  window.__strength = { error: error.message, log: logLines.join('\n') };
+});
+</script>
+</body></html>

@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14161d">
+<meta name="description" content="Шахматы в браузере с телекинезом: обменивайте две свои фигуры за заряд, полученный за взятие. Игра вдвоём на одном устройстве или против бота.">
+<title>ТелеШахматы — шахматы с телекинезом</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" id="brand-mark"></span> ТелеШахматы
+    </div>
+    <div class="topbar-actions">
+      <button id="btn-focus" class="btn btn-ghost" type="button" title="Режим «только доска» — клавиша F">⛶ Доска</button>
+      <button id="btn-rules" class="btn btn-ghost" type="button">Как играть</button>
+      <button id="btn-new" class="btn btn-primary" type="button">Новая игра</button>
+    </div>
+  </header>
+
+  <main class="layout">
+
+    <section class="board-column">
+
+      <div class="player-card" id="card-top" data-slot="top"></div>
+
+      <div class="board-frame">
+        <div id="board" class="board" aria-label="Шахматная доска"></div>
+        <div id="promo" class="overlay hidden">
+          <div class="overlay-box">
+            <div class="overlay-title">Пешка дошла до конца. Кем она станет?</div>
+            <div class="promo-choices">
+              <button class="promo-btn" type="button" data-promo="q"><span>♕</span><small>Ферзь</small></button>
+              <button class="promo-btn" type="button" data-promo="r"><span>♖</span><small>Ладья</small></button>
+              <button class="promo-btn" type="button" data-promo="b"><span>♗</span><small>Слон</small></button>
+              <button class="promo-btn" type="button" data-promo="n"><span>♘</span><small>Конь</small></button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="player-card" id="card-bottom" data-slot="bottom"></div>
+
+    </section>
+
+    <aside class="sidebar">
+
+      <section class="panel collapsible" data-panel="status">
+        <button class="panel-toggle" type="button" aria-expanded="true">
+          <span class="panel-title">Ход</span>
+          <span class="panel-badge" id="badge-status"></span>
+          <span class="chevron" aria-hidden="true"></span>
+        </button>
+        <div class="panel-body"><div class="panel-inner">
+          <div class="turn-box" id="turn-box">
+            <span class="turn-dot" id="turn-dot"></span>
+            <span class="turn-text" id="turn-text">Ход белых</span>
+          </div>
+          <button id="btn-swap" class="btn btn-swap" type="button" disabled>Обмен фигур: нет зарядов</button>
+          <div class="hint" id="hint-text">Выберите фигуру — подсветятся её ходы</div>
+        </div></div>
+      </section>
+
+      <section class="panel panel-moves collapsible" data-panel="moves">
+        <button class="panel-toggle" type="button" aria-expanded="true">
+          <span class="panel-title">Ходы</span>
+          <span class="panel-badge" id="badge-moves"></span>
+          <span class="chevron" aria-hidden="true"></span>
+        </button>
+        <div class="panel-body"><div class="panel-inner">
+          <div class="panel-head">
+            <h2>Нотация</h2>
+            <div class="panel-head-actions">
+              <button id="btn-undo" class="btn btn-mini" type="button">Отменить</button>
+              <button id="btn-copy" class="btn btn-mini" type="button">Копировать</button>
+            </div>
+          </div>
+          <div id="moves" class="moves"></div>
+        </div></div>
+      </section>
+
+      <section class="panel collapsible" data-panel="settings">
+        <button class="panel-toggle" type="button" aria-expanded="true">
+          <span class="panel-title">Настройки</span>
+          <span class="panel-badge" id="badge-settings"></span>
+          <span class="chevron" aria-hidden="true"></span>
+        </button>
+        <div class="panel-body"><div class="panel-inner">
+
+        <label class="field">
+          <span>Режим</span>
+          <select id="opt-mode">
+            <option value="pvp">Двое на устройстве</option>
+            <option value="bot">Против бота</option>
+          </select>
+        </label>
+
+        <label class="field" id="field-level">
+          <span>Сложность бота</span>
+          <select id="opt-level">
+            <option value="easy">Легко</option>
+            <option value="medium" selected>Средне</option>
+            <option value="hard">Сложно</option>
+          </select>
+        </label>
+
+        <label class="field" id="field-color">
+          <span>Ваш цвет</span>
+          <select id="opt-color">
+            <option value="w">Белые</option>
+            <option value="b">Чёрные</option>
+            <option value="r">Случайно</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Время на партию</span>
+          <select id="opt-time">
+            <option value="off">Без часов</option>
+            <option value="3+2">3 мин + 2 сек</option>
+            <option value="5+0">5 мин</option>
+            <option value="5+3">5 мин + 3 сек</option>
+            <option value="10+0">10 мин</option>
+            <option value="15+10">15 мин + 10 сек</option>
+          </select>
+        </label>
+
+        <div class="toggles">
+          <label class="toggle"><input type="checkbox" id="opt-highlights" checked><span>Подсветка ходов</span></label>
+          <label class="toggle"><input type="checkbox" id="opt-sound" checked><span>Звуки</span></label>
+          <label class="toggle"><input type="checkbox" id="opt-coords" checked><span>Координаты</span></label>
+        </div>
+
+        <div class="button-row">
+          <button id="btn-flip" class="btn btn-ghost" type="button">Перевернуть доску</button>
+          <button id="btn-pgn" class="btn btn-ghost" type="button">Скачать PGN</button>
+        </div>
+
+        </div></div>
+      </section>
+
+    </aside>
+
+  </main>
+</div>
+
+<!-- Режим «только доска»: узкая панель-иконки (сбоку на десктопе, снизу на телефоне) -->
+<div id="focus-bar" class="focus-bar">
+  <button id="btn-focus-swap" class="fb-btn fb-swap" type="button" disabled
+          aria-label="Обмен фигур" title="Обмен фигур">
+    <span class="fb-ico" aria-hidden="true"></span>
+    <span class="fb-badge" id="focus-charges"></span>
+  </button>
+  <button id="btn-journal" class="fb-btn" type="button"
+          aria-label="Журнал ходов" title="Журнал ходов">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M4 6h16M4 12h11M4 18h8" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round"/>
+    </svg>
+  </button>
+  <button id="btn-focus-exit" class="fb-btn fb-exit" type="button"
+          aria-label="Выйти из режима доски" title="Выйти · Esc">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round"/>
+    </svg>
+  </button>
+</div>
+
+<!-- Журнал ходов поверх доски -->
+<div id="journal" class="journal hidden">
+  <div class="journal-box">
+    <div class="journal-head">
+      <h2>Ходы</h2>
+      <button id="btn-journal-close" class="btn btn-mini" type="button">Закрыть</button>
+    </div>
+    <div id="moves-overlay" class="moves"></div>
+  </div>
+</div>
+
+<div id="modal-over" class="backdrop hidden">
+  <div class="modal">
+    <div class="modal-title" id="over-title">Партия окончена</div>
+    <div class="modal-reason" id="over-reason"></div>
+    <div class="modal-actions">
+      <button id="btn-rematch" class="btn btn-primary" type="button">Ещё партию</button>
+      <button id="btn-close-over" class="btn btn-ghost" type="button">Посмотреть доску</button>
+    </div>
+  </div>
+</div>
+
+<div id="modal-rules" class="backdrop hidden">
+  <div class="modal modal-wide">
+    <div class="modal-title">Как играть в ТелеШахматы</div>
+    <div class="rules">
+      <p><b>Всё как в обычных шахматах.</b> Ходят и бьют все фигуры, работают рокировка,
+        взятие на проходе и превращение пешки. Игра заканчивается матом, патом,
+        ничьей по тройному повторению, правилу 50 ходов или если материала не хватает для мата.</p>
+      <p><b>Фишка игры — телекинез.</b> За каждое взятие вы получаете <b>заряд</b> (максимум 3).
+        Раз в свой ход можно потратить 1 заряд и <b>поменять местами две свои фигуры</b>.
+        Это полноценный ход: после обмена очередь переходит сопернику.</p>
+      <p><b>Чего нельзя:</b>
+      <ul>
+        <li>обменять фигуры так, чтобы ваш король остался под шахом;</li>
+        <li>телепортировать пешку на 1-ю или 8-ю линию (превращается пешка только обычным ходом);</li>
+        <li>совмещать обмен с рокировкой, взятием на проходе или превращением.</li>
+      </ul></p>
+      <p><b>Зачем это нужно:</b> обмен пешки с ладьёй открывает линию, конь на 7-й линии
+        становится убийцей, а ферзь с ладьёй мгновенно находят общую цель.</p>
+    </div>
+    <div class="modal-actions">
+      <button id="btn-close-rules" class="btn btn-primary" type="button">Понятно</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="engine.js"></script>
+<script src="pieces.js"></script>
+<script src="bot.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

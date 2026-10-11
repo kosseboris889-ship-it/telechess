@@ -1,0 +1,270 @@
+﻿<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>ui tests</title></head>
+<body style="font-family: monospace; white-space: pre;"><div id="out">run…</div>
+<script src="engine.js"></script>
+<script src="bot.js"></script>
+<script>
+/* Тесты интерфейса: грузим игру во фрейме и кликаем по доске как человек. */
+const lines = [];
+let fails = 0;
+function log(s){ lines.push(s); document.getElementById('out').textContent = lines.join('\n'); }
+function chk(label, got, want){
+  const ok = JSON.stringify(got) === JSON.stringify(want);
+  if (!ok) fails++;
+  log((ok?'OK   ':'FAIL ') + label + ': ' + JSON.stringify(got) + (ok?'':' (ожидалось '+JSON.stringify(want)+')'));
+}
+const sq = Chess.nameToSq;
+
+(async function main(){
+  /* чистое состояние: интерфейс восстанавливает настройки из localStorage */
+  try { localStorage.clear(); } catch (err) {}
+
+  const frame = document.createElement('iframe');
+  frame.style.cssText = 'width:1100px;height:900px;border:0;position:absolute;left:-5000px';
+  frame.src = 'index.html';
+  document.body.appendChild(frame);
+  await new Promise(r => frame.addEventListener('load', r));
+  const win = frame.contentWindow;
+  const doc = frame.contentDocument;
+  const app = win.telechess;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const $s = sel => doc.querySelector(sel);
+  const click = name => app.clickSquare(sq(name));
+  const setSelect = (sel, value) => { const el = $s(sel); el.value = value; el.dispatchEvent(new win.Event('change')); };
+  const moves = () => Array.from(doc.querySelectorAll('#moves .move')).map(b => b.textContent).filter(Boolean);
+  const targets = () => doc.querySelectorAll('.cell.target').length;
+  const pieceAt = name => {
+    const cell = doc.querySelector('.cell[data-sq="'+sq(name)+'"]');
+    const p = cell && cell.querySelector('.piece');
+    return p ? p.dataset.piece : null;
+  };
+
+  // режим вдвоём
+  setSelect('#opt-mode', 'pvp');
+  await sleep(30);
+  chk('стартовая позиция: 32 фигуры', doc.querySelectorAll('.piece').length, 32);
+  chk('чей ход', $s('#turn-text').textContent, 'Ход: белых');
+
+  // 1. e2 выбирается, подсвечены ходы
+  click('e2');
+  chk('после выбора пешки подсвечено ходов', targets(), 2);
+
+  // 2. ход e4
+  click('e4');
+  chk('ход записан в историю', moves(), ['e4']);
+  chk('пешка на e4', pieceAt('e4'), 'P');
+  chk('история показывает ход чёрных', $s('#turn-text').textContent, 'Ход: чёрных');
+
+  // 3. ход чёрных e5 через перетаскивание
+  const drag = (from, to) => {
+    const a = doc.querySelector('.cell[data-sq="'+sq(from)+'"]').getBoundingClientRect();
+    const b = doc.querySelector('.cell[data-sq="'+sq(to)+'"]').getBoundingClientRect();
+    const o = { bubbles:true, cancelable:true, button:0, pointerId:1 };
+    doc.querySelector('.cell[data-sq="'+sq(from)+'"]').dispatchEvent(new win.PointerEvent('pointerdown', {...o, clientX:a.left+a.width/2, clientY:a.top+a.height/2}));
+    win.dispatchEvent(new win.PointerEvent('pointermove', {...o, clientX:b.left+b.width/2, clientY:b.top+b.height/2}));
+    win.dispatchEvent(new win.PointerEvent('pointerup', {...o, clientX:b.left+b.width/2, clientY:b.top+b.height/2}));
+  };
+  drag('e7', 'e5');
+  chk('перетаскивание работает', moves(), ['e4', 'e5']);
+
+  // 4. рокировка в два хода: e4 e5, Nf3 Nc6, Bc4 Bc5, O-O
+  click('g1'); click('f3');
+  click('b8'); click('c6');
+  click('f1'); click('c4');
+  click('f8'); click('c5');
+  click('e1'); click('g1');
+  chk('рокировка в SAN', moves().pop(), 'O-O');
+  chk('король на g1', pieceAt('g1'), 'K');
+  chk('ладья на f1', pieceAt('f1'), 'R');
+
+  // 5. отмена хода
+  $s('#btn-undo').click();
+  await sleep(20);
+  chk('после отмены король снова на e1', pieceAt('e1'), 'K');
+
+  // 6. новая игра
+  $s('#btn-new').click();
+  await sleep(20);
+  chk('новая игра чистит историю', moves(), []);
+  chk('новая игра: снова 32 фигуры', doc.querySelectorAll('.piece').length, 32);
+
+  // 7. заряд за взятие и обмен
+  win.telechess.getGame(); // состояние
+  const g = app.getGame();
+  g.state.charges.w = 2;
+  app.render();
+  chk('в панели доски показано 2 заряда', $s('#focus-charges').textContent, '2');
+  chk('счётчик зарядов виден', $s('#focus-charges').classList.contains('on'), true);
+  $s('#btn-swap').click();
+  await sleep(20);
+  chk('режим обмена включился', $s('#btn-swap').classList.contains('active'), true);
+  chk('подсвечены свои фигуры для обмена', doc.querySelectorAll('.cell.swap-ok').length > 0, true);
+  click('b1'); click('c1');   // конь b1 <-> слон c1: обе фигуры не пешки, обмен разрешён
+  await sleep(20);
+  chk('обмен сделан', pieceAt('b1'), 'B');
+  chk('конь приехал на c1', pieceAt('c1'), 'N');
+  chk('заряд потрачен', app.getState().charges.w, 1);
+  chk('после обмена панель показывает заряды тех, кто ходит', $s('#focus-charges').textContent, '');
+  chk('счётчик скрыт без зарядов', $s('#focus-charges').classList.contains('on'), false);
+  chk('обмен появился в истории', moves().pop(), 'Nb1↔Bc1');
+
+  // 8. превращение пешки
+  $s('#btn-new').click();
+  await sleep(20);
+  const g2 = app.getGame();
+  g2.past = [Chess.newState('8/P6k/8/8/8/8/8/K7 w - - 0 1')];
+  g2.keys = [Chess.posKey(g2.state)];
+  g2.sans = []; g2.moveObjs = [];
+  g2.result = null;
+  app.render();
+  click('a7'); click('a8');
+  await sleep(20);
+  chk('открылось окно превращения', $s('#promo').classList.contains('hidden'), false);
+  const promos = doc.querySelectorAll('.promo-btn').length;
+  chk('вариантов превращения 4', promos, 4);
+  doc.querySelector('.promo-btn[data-promo="n"]').click();
+  await sleep(20);
+  chk('пешка превратилась в коня', pieceAt('a8'), 'N');
+  chk('окно превращения закрылось', $s('#promo').classList.contains('hidden'), true);
+
+  // 9. мат показывается модальным окном
+  $s('#btn-new').click();
+  await sleep(20);
+  const g3 = app.getGame();
+  g3.past = [Chess.newState('7k/5ppp/8/8/8/8/8/R5K1 w - - 0 1')];
+  g3.keys = [Chess.posKey(g3.state)];
+  g3.sans = []; g3.moveObjs = []; g3.result = null;
+  app.render();
+  click('a1'); click('a8');
+  await sleep(30);
+  chk('показано окно конца партии', $s('#modal-over').classList.contains('hidden'), false);
+  chk('победа белых', $s('#over-title').textContent, 'Победа белых');
+  chk('причина — мат', $s('#over-reason').textContent.indexOf('Шах и мат') >= 0, true);
+
+  // 10. таймер
+  setSelect('#opt-time', '3+2');
+  await sleep(30);
+  chk('часы запущены', /^\d\d:\d\d$/.test(doc.querySelector('.pc-clock').textContent), true);
+  chk('после хода часы пошли', (() => {
+    const before = doc.querySelectorAll('.pc-clock')[0].textContent;
+    return typeof before === 'string' && before.includes(':');
+  })(), true);
+
+  // 11. бот отвечает на ход игрока
+  setSelect('#opt-mode', 'bot');
+  setSelect('#opt-level', 'easy');
+  setSelect('#opt-color', 'w');
+  await sleep(60);
+  chk('игрок ходит белыми, бот — за чёрных', win.telechess.getGame().turn === 'w', true);
+  click('e2'); click('e4');
+  await sleep(2500);
+  chk('бот ответил', moves().length >= 2, true);
+  chk('ход игрока в истории', moves()[0], 'e4');
+  chk('свой цвет сохранён', $s('#opt-color').value, 'w');
+
+  // 12) сворачивание панелей
+  const panel = name => doc.querySelector('[data-panel="' + name + '"]');
+  const toggle = name => doc.querySelector('[data-panel="' + name + '"] .panel-toggle');
+  const settingsPanel = panel('settings');
+  const wasCollapsed = settingsPanel.classList.contains('collapsed');
+  const tallBefore = settingsPanel.getBoundingClientRect().height;
+  toggle('settings').click();
+  await sleep(260);
+  const shortH = settingsPanel.getBoundingClientRect().height;
+  chk('панель настроек свернулась', settingsPanel.classList.contains('collapsed'), !wasCollapsed);
+  chk('панель стала ниже', shortH < tallBefore / 2, true);
+  chk('в свёрнутой панели есть подпись', $s('#badge-settings').textContent.length > 0, true);
+  toggle('settings').click();
+  await sleep(260);
+  chk('панель развернулась обратно', settingsPanel.classList.contains('collapsed'), wasCollapsed);
+  const movesWereCollapsed = panel('moves').classList.contains('collapsed');
+  toggle('moves').click();
+  await sleep(260);
+  chk('панели сворачиваются независимо', panel('moves').classList.contains('collapsed'), !movesWereCollapsed);
+  chk('настройки не тронуты', settingsPanel.classList.contains('collapsed'), wasCollapsed);
+  chk('счётчик ходов виден', $s('#badge-moves').textContent, '2 хода');
+  toggle('moves').click();
+  await sleep(260);
+
+  // 13) режим «только доска»
+  $s('#btn-focus').click();
+  await sleep(320);
+  const inFocus = doc.body.classList.contains('focus-mode');
+  chk('фокус-режим включился', inFocus, true);
+  chk('сайдбар скрыт', win.getComputedStyle($s('.sidebar')).display, 'none');
+  chk('шапка скрыта', win.getComputedStyle($s('.topbar')).display, 'none');
+  chk('карточки игроков остались', win.getComputedStyle($s('#card-top')).display !== 'none', true);
+  chk('карточка в фокус-режиме компактная', $s('#card-top').getBoundingClientRect().height < 60, true);
+  chk('заряды и имя игрока на месте',
+      !!$s('#card-top .pc-name') && !!$s('#card-top .pc-charges') && !!$s('#card-bottom .pc-clock'), true);
+  const bar = $s('#focus-bar');
+  chk('плавающая панель видна', win.getComputedStyle(bar).opacity === '1', true);
+  const boardRect = $s('#board').getBoundingClientRect();
+  chk('доска помещается в окно', boardRect.bottom <= win.innerHeight && boardRect.right <= win.innerWidth, true);
+  chk('доска занимает почти всю высоту', boardRect.height >= win.innerHeight * 0.72, true);
+  chk('доска по центру', Math.abs((boardRect.left + boardRect.right) / 2 - win.innerWidth / 2) < 60, true);
+  chk('страница не прокручивается', doc.documentElement.scrollHeight <= doc.documentElement.clientHeight + 1, true);
+
+  // панель-иконки: без текста, сбоку от доски, ничего не перекрывает
+  const barRect = bar.getBoundingClientRect();
+  const barButtons = [...doc.querySelectorAll('.fb-btn')];
+  chk('три кнопки-иконки', barButtons.length, 3);
+  chk('на кнопках нет текста', barButtons.every(b => !b.textContent.trim()), true);
+  chk('у каждой кнопки подсказка', barButtons.every(b => b.getAttribute('aria-label') && b.title), true);
+  chk('у кнопок есть иконки', doc.querySelectorAll('.fb-btn svg').length, 3);
+  chk('панель вертикальная', win.getComputedStyle(bar).flexDirection, 'column');
+  chk('панель узкая', barRect.width < 70, true);
+  chk('панель сбоку от доски', barRect.left > boardRect.right, true);
+  chk('панель не наезжает на доску',
+      barRect.right <= boardRect.left || barRect.left >= boardRect.right ||
+      barRect.bottom <= boardRect.top || barRect.top >= boardRect.bottom, true);
+  chk('панель целиком в окне',
+      barRect.left >= 0 && barRect.right <= win.innerWidth &&
+      barRect.top >= 0 && barRect.bottom <= win.innerHeight, true);
+
+  // журнал поверх доски
+  $s('#btn-journal').click();
+  await sleep(200);
+  chk('журнал открылся', $s('#journal').classList.contains('hidden'), false);
+  chk('в журнале есть ходы', doc.querySelectorAll('#moves-overlay .move').length >= 1, true);
+  $s('#btn-journal-close').click();
+  await sleep(150);
+  chk('журнал закрылся', $s('#journal').classList.contains('hidden'), true);
+
+  // кнопка обмена доступна в фокус-режиме
+  chk('кнопка обмена есть в фокус-режиме', !!$s('#btn-focus-swap'), true);
+
+  // Esc выходит из фокус-режима
+  doc.body.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await sleep(320);
+  chk('Esc вышел из фокус-режима', doc.body.classList.contains('focus-mode'), false);
+  chk('сайдбар вернулся', win.getComputedStyle($s('.sidebar')).display !== 'none', true);
+
+  // клавиша F переключает режим
+  doc.body.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'f', bubbles: true }));
+  await sleep(300);
+  chk('клавиша F включила фокус', doc.body.classList.contains('focus-mode'), true);
+  doc.body.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'f', bubbles: true }));
+  await sleep(300);
+  chk('клавиша F выключила фокус', doc.body.classList.contains('focus-mode'), false);
+
+  // состояние сохраняется между перезагрузками
+  const beforeSettings = panel('settings').classList.contains('collapsed');
+  toggle('settings').click();
+  const focusWas = doc.body.classList.contains('focus-mode');
+  if (!focusWas) $s('#btn-focus').click();
+  await sleep(250);
+  const saved = JSON.parse(win.localStorage.getItem('telechess.settings.v1'));
+  chk('сохранено: фокус включён', saved.focus, true);
+  chk('сохранено: панель настроек свёрнута', saved.collapsed.settings, !beforeSettings);
+  if (!focusWas) $s('#btn-focus').click();
+  toggle('settings').click();
+  await sleep(200);
+
+  log(fails === 0 ? '=== ТЕСТЫ ИНТЕРФЕЙСА ПРОЙДЕНЫ ===' : ('=== ОШИБОК: ' + fails + ' ==='));
+  window.__ui = { fails, log: lines.join('\n') };
+})().catch(err => {
+  log('ИСКЛЮЧЕНИЕ: ' + err.message + '\n' + err.stack);
+  window.__ui = { fails: fails + 1, log: lines.join('\n') };
+});
+</script></body></html>

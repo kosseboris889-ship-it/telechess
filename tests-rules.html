@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>tests</title></head>
+<body><pre id="out">run…</pre>
+<script src="engine.js"></script>
+<script>
+const lines = [];
+let fails = 0;
+function log(s){ lines.push(s); document.getElementById('out').textContent = lines.join('\n'); }
+function chk(label, got, want){
+  const ok = JSON.stringify(got) === JSON.stringify(want);
+  if (!ok) fails++;
+  log((ok?'OK   ':'FAIL ') + label + ': ' + JSON.stringify(got) + (ok?'':' (ожидалось '+JSON.stringify(want)+')'));
+}
+const sq = Chess.nameToSq;
+function gameAt(fen){
+  const g = new Chess.Game();
+  g.past = [Chess.newState(fen)];
+  g.keys = [Chess.posKey(g.state)];
+  return g;
+}
+function bySan(g, san){
+  const mv = Chess.legalMoves(g.state).find(m => Chess.toSan(g.state, m, Chess.applyMove(g.state, m)) === san);
+  if (!mv) { fails++; log('FAIL не найден ход ' + san); return null; }
+  g.play(mv);
+  return mv;
+}
+
+// --- Ферзевый мат
+let g = new Chess.Game();
+['f3','e5','g4','Qh4#'].forEach(san => bySan(g, san));
+chk('ф.мат: результат', g.result && g.result.result, '0-1');
+chk('ф.мат: причина', g.result && g.result.reason, 'checkmate');
+chk('ф.мат: SAN', g.sans, ['f3','e5','g4','Qh4#']);
+
+// --- Пат (позиция ставится напрямую)
+g = gameAt('k7/8/8/8/8/8/5q2/7K w - - 0 1');
+chk('пат: результат', g.status().reason, 'stalemate');
+
+// --- Шах, но не мат
+g = gameAt('4r3/8/8/8/8/8/3P4/4K3 w - - 0 1');
+const stCheck = g.status();
+chk('шах: игра не окончена', stCheck.over, false);
+chk('шах: inCheck', stCheck.inCheck, true);
+// --- Мат на задней линии
+g = gameAt('R5k1/5ppp/8/8/8/8/8/6K1 b - - 0 1');
+chk('мат на задней линии', g.status().reason, 'checkmate');
+chk('победа белых', g.status().result, '1-0');
+
+// --- Различение фигур в SAN (кони с b1 и f3 оба могут пойти на d2)
+g = gameAt('4k3/8/8/8/8/5N2/8/1N2K3 w - - 0 1');
+const d2moves = Chess.legalMoves(g.state).filter(m => m.to === sq('d2') && m.piece === 'N');
+chk('SAN при разных файлах', d2moves.map(m=>Chess.toSan(g.state,m,Chess.applyMove(g.state,m))).sort(), ['Nbd2','Nfd2']);
+// --- Различение по горизонтали (оба коня на файле b)
+g = gameAt('4k3/8/8/1N6/8/8/8/1N2K3 w - - 0 1');
+const c3moves = Chess.legalMoves(g.state).filter(m => m.to === sq('c3') && m.piece === 'N');
+chk('SAN по рангу при одном файле', c3moves.map(m=>Chess.toSan(g.state,m,Chess.applyMove(g.state,m))).sort(), ['N1c3','N5c3']);
+g = gameAt('4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1');
+const castleSans = Chess.legalMoves(g.state).map(m=>Chess.toSan(g.state,m,Chess.applyMove(g.state,m)));
+chk('рокировки в SAN', castleSans.includes('O-O') && castleSans.includes('O-O-O'), true);
+g = gameAt('4k3/8/8/8/8/8/8/R3K1NR w KQ - 0 1');
+chk('короткая рокировка закрыта конём', Chess.legalMoves(g.state).filter(m=>m.flags==='k').length, 0);
+chk('длинная рокировка разрешена', Chess.legalMoves(g.state).filter(m=>m.flags==='q').length, 1);
+
+// --- Превращение
+g = gameAt('8/P6k/8/8/8/8/8/K7 w - - 0 1');
+const proms = Chess.legalMoves(g.state).filter(m => m.promo);
+chk('вариантов превращения', proms.map(m=>m.promo).sort(), ['b','n','q','r']);
+chk('SAN превращения', g.play(proms.find(m => m.promo === 'q')).san, 'a8=Q');
+chk('на доске ферзь', g.pos.board[sq('a8')], 'Q');
+
+// --- Взятие на проходе
+g = gameAt('rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3');
+chk('SAN взятия на проходе', Chess.toSan(g.state, Chess.legalMoves(g.state).find(m=>m.flags==='e'), Chess.applyMove(g.state, Chess.legalMoves(g.state).find(m=>m.flags==='e'))), 'exf6 e.p.');
+g.play(Chess.legalMoves(g.state).find(m => m.flags === 'e'));
+chk('пешка f5 убрана', g.pos.board[sq('f5')], null);
+chk('пешка на f6', g.pos.board[sq('f6')], 'P');
+chk('ep больше недоступен', Chess.legalMoves(g.state).filter(m=>m.flags==='e').length, 0);
+
+// --- Телекинез: конь и слон меняются местами
+g = gameAt('4k3/8/8/3N4/8/8/4B3/4K3 w - - 0 1');
+g.state.charges.w = 1;
+const nb = Chess.legalMoves(g.state).filter(m=>m.swap && ((m.from===sq('d5')&&m.to===sq('e2'))||(m.from===sq('e2')&&m.to===sq('d5'))));
+chk('обмен коня и слона доступен', nb.length, 1);
+const swapMove = nb[0].from === sq('d5') ? nb[0] : { ...nb[0], from: nb[0].to, to: nb[0].from, piece: g.pos.board[nb[0].to] };
+g.play(swapMove);
+chk('заряд потрачен', g.state.charges.w, 0);
+chk('конь на e2', g.pos.board[sq('e2')], 'N');
+chk('слон на d5', g.pos.board[sq('d5')], 'B');
+chk('SAN обмена', g.sans[0], 'Nd5↔Be2');
+chk('очередь перешла', g.turn, 'b');
+
+// --- Телекинез: нельзя оставить короля под шахом
+g = gameAt('4k3/8/8/8/8/8/r7/4K3 w - - 0 1');
+g.state.charges.w = 1;
+chk('обмен, открывающий шах, запрещён', Chess.legalMoves(g.state).filter(m=>m.swap).length, 0);
+
+// --- Телекинез: пешка не встаёт на крайние линии
+g = gameAt('4k3/8/8/8/8/8/4P3/4K2R w - - 0 1');
+g.state.charges.w = 1;
+const bad = Chess.legalMoves(g.state).filter(m=>m.swap && ((m.from===sq('e2')&&m.to===sq('h1'))||(m.from===sq('h1')&&m.to===sq('e2'))));
+chk('пешка не может на 1-ю линию', bad.length, 0);
+
+// --- Телекинес: заряд тратится только своей стороной
+g = gameAt('4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1');
+g.state.charges.w = 3;
+g.state.charges.b = 1;
+g.play(Chess.legalMoves(g.state).find(m=>m.captured));
+chk('взятие белыми: заряд белых', g.state.charges.w, 3);
+chk('заряд чёрных не тронут', g.state.charges.b, 1);
+
+// --- Заряд не копится выше 3
+g = gameAt('4k3/8/8/3q4/3P4/8/8/4K3 w - - 0 1');
+g.state.charges.w = 3;
+g.play(Chess.legalMoves(g.state).find(m=>m.captured));
+chk('заряд не выше 3', g.state.charges.w, 3);
+
+// --- Отмена хода
+g = new Chess.Game();
+const before = g.fen();
+g.play(Chess.legalMoves(g.state).find(m=>m.to===sq('e4')));
+g.undo();
+chk('отмена возвращает позицию', g.fen(), before);
+chk('отмена чистит историю', g.sans.length, 0);
+
+// --- Тройное повторение
+g = new Chess.Game();
+for (let i=0;i<2;i++) for (const san of ['Nf3','Nf6','Ng1','Ng8']) bySan(g, san);
+chk('ничья повторением', g.result && g.result.reason, 'repetition');
+chk('позиция повторилась 3 раза', g.keys.filter(k=>k===Chess.posKey(g.state)).length, 3);
+
+// --- Правило 50 ходов
+g = gameAt('4k3/8/8/8/8/8/8/R3K2R w KQ - 99 60');
+g.state.pos.half = 100;
+chk('ничья 50 ходов', g.status().reason, 'fifty');
+
+// --- Недостаточный материал
+for (const [fen, want] of [['7k/8/8/8/8/8/8/K7 w - - 0 1', true], ['7k/8/8/8/8/8/8/KB6 w - - 0 1', true], ['7k/8/8/8/8/8/8/KN6 w - - 0 1', true], ['7k/8/8/8/8/8/8/KBB5 w - - 0 1', false], ['7k/8/8/8/8/8/4P3/K7 w - - 0 1', false], ['7k/8/8/8/8/8/8/KB1B4 w - - 0 1', true]]) {
+  chk('материал ' + fen, Chess.insufficientMaterial(Chess.fromFen(fen).board), want);
+}
+
+// --- PGN
+g = new Chess.Game();
+['e4','e5','Nf3'].forEach(san => bySan(g, san));
+chk('PGN', g.pgn('Белые','Чёрные').split('\n').filter(l=>l && !l.startsWith('[')).join(' '), '1. e4 e5 2. Nf3 *');
+
+// --- FEN туда-обратно
+for (const fen of [Chess.START_FEN, 'r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1', '8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1']) {
+  chk('FEN ' + fen.slice(0,20), Chess.toFen(Chess.fromFen(fen)), fen);
+}
+
+log(fails === 0 ? '=== ВСЕ ТЕСТЫ ПРОЙДЕНЫ ===' : ('=== ОШИБОК: ' + fails + ' ==='));
+window.__test = { fails, log: lines.join('\n') };
+</script></body></html>

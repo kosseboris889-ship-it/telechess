@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>оценка позиции</title>
+<style>
+  body { background:#0b0e14; color:#e8eefc; font:14px/1.55 "Segoe UI",system-ui,sans-serif; padding:18px; }
+  h1 { font-size:18px; color:#6ea8ff; margin:0 0 4px; }
+  .hint { color:#7b86a5; font-size:13px; margin-bottom:12px; max-width: 780px; }
+  .ok { color:#37d39b; } .bad { color:#ff5f7a; } .sum { color:#ffd27a; font-weight:600; margin-top:10px; }
+</style></head>
+<body>
+<h1>Оценка позиции</h1>
+<div class="hint">Оценка должна быть зеркальной (отразили доску — получили то же число с
+противоположным знаком), детерминированной и правильной по знаку на известных позициях.
+Это ловит ошибки, которые в обычной игре заметны не сразу.</div>
+<div id="out"></div>
+<script src="engine.js"></script>
+<script src="bot.js"></script>
+<script>
+const lines = [];
+const out = document.getElementById('out');
+let fails = 0;
+function log(s, cls) {
+  const div = document.createElement('div');
+  if (cls) div.className = cls;
+  div.textContent = s;
+  out.appendChild(div);
+  lines.push((cls ? '[' + cls + '] ' : '') + s);
+}
+function chk(label, ok, note) {
+  if (!ok) fails++;
+  log((ok ? 'OK   ' : 'FAIL ') + label + (note !== undefined ? ': ' + note : ''));
+}
+
+/* Настоящая симметрия оценки — отражение по горизонталям (ранг 1 ↔ 8) с
+   переменой цветов: именно так устроены таблицы PST (mirrorSq отражает ранг).
+   Отражение по вертикалям проверять бессмысленно — там король и ферзь меняются
+   местами относительно центральных файлов, это другая позиция. */
+function mirrorFen(fen) {
+  const parts = fen.split(' ');
+  const swap = c => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase());
+  const mirrored = parts[0].split('/').slice().reverse()
+    .map(row => row.replace(/[a-zA-Z]/g, swap)).join('/');
+  const turn = parts[1] === 'w' ? 'b' : 'w';
+  const castling = (parts[2] === '-' ? '-' : parts[2].split('')
+    .map(c => c === 'K' ? 'k' : c === 'Q' ? 'q' : c === 'k' ? 'K' : 'q').join(''));
+  return [mirrored, turn, castling, parts[3] || '-', parts[4] || '0', parts[5] || '1'].join(' ');
+}
+
+const SYMMETRY = [
+  'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+  'r2q1rk1/pp2bppp/2n1pn2/3p4/3P4/2NBPN2/PP3PPP/R1BQ1RK1 w - - 2 9',
+  'r1bq1rk1/pp2ppbp/2np1np1/8/2BNP3/2N1B3/PPP2PPP/R2Q1RK1 w - - 6 9',
+  '8/8/4k3/8/4P3/4K3/8/6R1 w - - 0 40',
+  '8/2k5/8/8/8/8/5PPP/6K1 w - - 0 40',
+  'rnbqkb1r/pp2pppp/2p2n2/3p4/3P4/2N2N2/PP2PPPP/R1BQKB1R w KQkq - 4 5',
+  '4k3/8/8/8/3B4/2q5/8/4K3 w - - 0 1',
+  '4k3/8/8/8/8/8/PPPPPPPP/4K3 w - - 0 1',
+];
+
+/* 1) симметрия доски.
+      evaluate() отдаёт оценку от того, кто сейчас ходит. При зеркале доски
+      меняются цвета и очередь хода, поэтому корректная проверка — значения
+      должны СОВПАДАТЬ, а не быть противоположными. Допуск 24 — это вклад
+      темпа (±10 со стороны каждого короля). */
+log('--- симметрия доски ---');
+for (const fen of SYMMETRY) {
+  const a = Bot.evaluate(Chess.newState(fen));
+  const b = Bot.evaluate(Chess.newState(mirrorFen(fen)));
+  chk('зеркально ' + fen.split(' ')[0].slice(0, 26),
+      Math.abs(a - b) <= 24, Math.round(a) + ' и ' + Math.round(b));
+}
+
+/* 2) детерминированность: та же позиция — тот же результат */
+log('');
+log('--- детерминированность ---');
+for (const fen of SYMMETRY.slice(0, 4)) {
+  const runs = [];
+  for (let i = 0; i < 3; i++) runs.push(Bot.evaluate(Chess.newState(fen)));
+  chk('стабильно ' + fen.split(' ')[0].slice(0, 26),
+      runs.every(v => v === runs[0]), JSON.stringify(runs));
+}
+
+/* 3) телекинез: заряды влияют на оценку и симметричны */
+log('');
+log('--- телекинез ---');
+{
+  const base = 'r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 1';
+  const st0 = Chess.newState(base);
+  const st1 = Chess.newState(base);
+  st1.charges.w = 2;
+  const a = Bot.evaluate(st0), b = Bot.evaluate(st1);
+  chk('заряды белых улучшают оценку белых', b > a, Math.round(a) + ' → ' + Math.round(b));
+
+  const stM = Chess.newState(mirrorFen(base));
+  stM.charges.b = 2;   /* при зеркале цвета меняются местами */
+  const m = Bot.evaluate(stM);
+  chk('заряды симметричны', Math.abs(b - m) <= 24, Math.round(b) + ' и ' + Math.round(m));
+}
+
+/* 4) знак оценки на бесспорных позициях */
+log('');
+log('--- знак оценки ---');
+{
+  const upRook = Bot.evaluate(Chess.newState('4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1'));
+  chk('лишняя ладья — большой плюс', upRook > 400, Math.round(upRook));
+
+  /* ферзь висит под конём, конь в безопасности: конь бьёт a6,
+     а ферзь коня не достаёт (a6 и c5 не на одной линии).
+     Потеря ферзя должна обнулить его ценность — дальше ход заберёт его поиск. */
+  const freeQueen = Bot.evaluate(Chess.newState('4k3/8/q7/2N5/8/8/8/4K3 w - - 0 1'));
+  chk('висящий ферзь не засчитывается в ценность', freeQueen > 300, Math.round(freeQueen));
+
+  /* встречное: ферзь бьёт слона и сам под боем — позиция примерно равна */
+  const mutual = Bot.evaluate(Chess.newState('4k3/8/8/8/3B4/2q5/8/4K3 w - - 0 1'));
+  chk('взаимный размен не даёт плюса', Math.abs(mutual) < 200, Math.round(mutual));
+
+  /* одинаковый материал (по 8 пешек), у белых сдвоенная пешка «c» */
+  const healthy = Bot.evaluate(Chess.newState('4k3/8/8/8/8/8/PPPPPPPP/4K3 w - - 0 1'));
+  const doubled = Bot.evaluate(Chess.newState('4k3/8/8/8/8/2P5/PP1PPPPP/4K3 w - - 0 1'));
+  chk('сдвоенная пешка хуже здоровой', healthy > doubled,
+      Math.round(healthy) + ' против ' + Math.round(doubled));
+
+  /* одинаковый материал, у белых изолированная пешка на b4 */
+  const iso = Bot.evaluate(Chess.newState('4k3/8/8/8/1P6/8/P7/4K3 w - - 0 1'));
+  chk('изолированная пешка хуже', iso < healthy, Math.round(iso) + ' против ' + Math.round(healthy));
+
+  /* зеркально: у чёрных те же недостатки */
+  chk('сдвоенная пешка симметрична', Math.abs(doubled - Bot.evaluate(
+      Chess.newState(mirrorFen('4k3/8/8/8/8/2P5/PP1PPPPP/4K3 w - - 0 1')))) <= 24);
+}
+
+/* 5) разница из-за темпа небольшая */
+log('');
+log('--- темп ---');
+{
+  const fen = '4k3/8/8/8/8/8/4P3/4K3 w - - 0 1';
+  const w = Bot.evaluate(Chess.newState(fen));
+  const b = Bot.evaluate(Chess.newState(fen.replace(' w ', ' b ')));
+  chk('разница только из-за темпа', Math.abs(w + b) <= 24, Math.round(w) + ' / ' + Math.round(b));
+}
+
+log('');
+log(fails === 0 ? '=== ОЦЕНКА: ВСЕ ПРОВЕРКИ ПРОЙДЕНЫ ===' : ('=== ОЦЕНКА: ОШИБОК ' + fails + ' ==='),
+    fails === 0 ? 'sum' : 'bad');
+window.__evalTest = { fails, log: lines.join('\n') };
+</script></body></html>
